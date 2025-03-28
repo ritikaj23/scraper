@@ -1,234 +1,212 @@
-package pages;
+package base;
 
-import org.openqa.selenium.Keys;
+import io.github.bonigarcia.wdm.WebDriverManager;
+import org.openqa.selenium.Cookie;
 import org.openqa.selenium.WebDriver;
-import org.openqa.selenium.WebElement;
-import org.openqa.selenium.support.FindBy;
-import org.openqa.selenium.support.PageFactory;
-import org.openqa.selenium.support.ui.ExpectedConditions;
+import org.openqa.selenium.chrome.ChromeDriver;
+import org.openqa.selenium.chrome.ChromeOptions;
 import org.openqa.selenium.support.ui.WebDriverWait;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.openqa.selenium.TakesScreenshot;
-import org.openqa.selenium.OutputType;
-import org.openqa.selenium.By;
+import pages.*;
+import utils.TestUtil;
 
-import java.io.File;
-import java.nio.file.Files;
-import java.nio.file.StandardCopyOption;
+import java.io.*;
+import java.util.Date;
+import java.util.Properties;
+import java.util.Set;
 import java.time.Duration;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.List;
-import java.util.stream.Collectors;
 
-public class AdminCoursesPage {
-    private static final Logger logger = LoggerFactory.getLogger(AdminCoursesPage.class);
-    private final WebDriver driver;
-    private final WebDriverWait wait;
+public class BasePage {
+    private static final Logger logger = LoggerFactory.getLogger(BasePage.class);
+    protected WebDriver driver;
+    protected Properties prop;
+    protected LoginPage loginPage;
+    protected ForgottenPasswordPage forgottenPasswordPage;
+    protected HomePage homePage;
+    protected RegistrationPage registrationPage;
+    protected DashboardPage dashboardPage;
+    protected AdminCoursesPage adminCoursesPage;
+    protected CourseRatingsScraper courseRatingsScraper;
 
-    @FindBy(xpath = "//input[@placeholder='Search']")
-    private WebElement searchField;
-
-    @FindBy(xpath = "//td[contains(@class, 'css-1vekh47')]//a[contains(@href, '/teach/')]")
-    private List<WebElement> courseLinks;
-
-    @FindBy(xpath = "//button[@aria-label='Next page']")
-    private WebElement nextPageButton;
-
-    @FindBy(xpath = "//table[contains(@class, 'css-1vzbk0')]")
-    private WebElement courseTable;
-
-    public AdminCoursesPage(WebDriver driver) {
-        this.driver = driver;
-        this.wait = new WebDriverWait(driver, Duration.ofSeconds(30));
-        PageFactory.initElements(driver, this);
-    }
-
-    public void navigateToAdminCourses(String adminUrl) {
-        logger.info("Navigating to Admin Courses page: {}", adminUrl);
-        
-        driver.get(adminUrl);
-        
-        new WebDriverWait(driver, Duration.ofSeconds(30))
-                .until(d -> ((org.openqa.selenium.JavascriptExecutor) d)
-                        .executeScript("return document.readyState").equals("complete"));
-        
+    public BasePage() {
         try {
-            String currentUrl = driver.getCurrentUrl();
-            logger.info("Current URL after navigation: {}", currentUrl);
-
-            if (currentUrl.contains("login") || currentUrl.contains("signin")) {
-                logger.error("Redirected to login page. Authentication may have failed.");
-                throw new RuntimeException("Authentication failed. Redirected to login page: " + currentUrl);
-            }
-
-            String pageTitle = driver.getTitle();
-            logger.info("Page title: {}", pageTitle);
-
-            logger.info("Page source after navigation: {}", driver.getPageSource());
-
-            wait.until(ExpectedConditions.presenceOfElementLocated(
-                org.openqa.selenium.By.tagName("body")
-            ));
-
-            try {
-                wait.until(ExpectedConditions.presenceOfElementLocated(
-                    org.openqa.selenium.By.xpath("//div[contains(@class, 'rc-')]")
-                ));
-                logger.info("Found a div with class containing 'rc-'");
-            } catch (Exception e) {
-                logger.warn("No div with class containing 'rc-' found. The page structure might have changed.");
-            }
-
-            logger.info("Waiting for search field to be visible...");
-            wait.until(ExpectedConditions.visibilityOf(searchField));
-            logger.info("Successfully navigated to Admin Courses page: {}", driver.getCurrentUrl());
-        } catch (Exception e) {
-            logger.error("Failed to navigate to Admin Courses page. Current URL: {}", driver.getCurrentUrl());
-            logger.error("Page source on failure: {}", driver.getPageSource());
-            try {
-                File screenshot = ((TakesScreenshot) driver).getScreenshotAs(OutputType.FILE);
-                Files.copy(screenshot.toPath(), new File("admin-navigation-failure-screenshot.png").toPath(), StandardCopyOption.REPLACE_EXISTING);
-                logger.info("Screenshot saved as admin-navigation-failure-screenshot.png");
-            } catch (Exception ex) {
-                logger.error("Failed to save screenshot: {}", ex.getMessage());
-            }
-            throw new RuntimeException("Failed to navigate to Admin Courses page: " + e.getMessage(), e);
+            prop = new Properties();
+            FileInputStream ip = new FileInputStream(System.getProperty("user.dir") + "/src/main/java/config/config.properties");
+            prop.load(ip);
+        } catch (FileNotFoundException e) {
+            e.printStackTrace();
+            throw new RuntimeException("config.properties file not found at the specific path");
+        } catch (IOException e) {
+            e.printStackTrace();
+            throw new RuntimeException("Error reading config.properties file");
         }
     }
 
-    public List<CourseVersion> searchAndGetCourseVersions(String courseName) {
-        List<CourseVersion> versions = new ArrayList<>();
-        try {
-            logger.info("Searching for course: {}", courseName);
-            logger.info("Search field located: {}", searchField != null);
-            wait.until(ExpectedConditions.elementToBeClickable(searchField));
-            searchField.clear();
-            searchField.sendKeys(courseName);
-            searchField.sendKeys(Keys.ENTER);
-            logger.info("Search submitted for course: {}", courseName);
+    public WebDriver getDriver() {
+        return driver;
+    }
 
-            // Wait for the table to load after search
+    public void setUp() {
+        initializeDriver();
+        loadCookies();
+
+        String currentUrl = driver.getCurrentUrl();
+        if (currentUrl.contains("login") || currentUrl.contains("signin")) {
+            logger.warn("Authentication failed with cookies. Attempting manual login...");
+            performManualLogin();
+            saveCookies();
+        }
+
+        logger.info("Initializing page objects with driver: {}", driver);
+        loginPage = new LoginPage(driver);
+        homePage = new HomePage(driver);
+        registrationPage = new RegistrationPage(driver);
+        dashboardPage = new DashboardPage(driver);
+        adminCoursesPage = new AdminCoursesPage(driver);
+        courseRatingsScraper = new CourseRatingsScraper(driver);
+        logger.info("adminCoursesPage initialized: {}", adminCoursesPage != null);
+        logger.info("courseRatingsScraper initialized: {}", courseRatingsScraper != null);
+    }
+
+    public void initializeDriver() {
+        String browserName = prop.getProperty("browser");
+        Boolean headlessMode = Boolean.parseBoolean(prop.getProperty("headless"));
+
+        logger.info("Initializing WebDriver with browser: {}, headless: {}", browserName, headlessMode);
+        if (browserName.equals("chrome")) {
+            WebDriverManager.chromedriver().setup();
+            ChromeOptions options = new ChromeOptions();
+            if (headlessMode) {
+                options.addArguments("--headless");
+            }
+            options.addArguments("--disable-gpu");
+            options.addArguments("--window-size=1920,1080");
+            options.addArguments("--no-sandbox");
+            options.addArguments("--disable-dev-shm-usage");
+            driver = new ChromeDriver(options);
+        }
+
+        if (driver == null) {
+            throw new RuntimeException("Failed to initialize WebDriver. Check browser configuration.");
+        }
+
+        driver.manage().window().maximize();
+        driver.manage().deleteAllCookies();
+        driver.manage().timeouts().pageLoadTimeout(Duration.ofSeconds(TestUtil.PAGE_LOAD_TIMEOUT));
+        driver.manage().timeouts().implicitlyWait(Duration.ofSeconds(TestUtil.IMPLICIT_WAIT));
+
+        String url = prop.getProperty("url");
+        logger.info("Navigating to URL: {}", url);
+        driver.get(url);
+    }
+
+    public void closeDriver() {
+        try {
+            if (driver != null) {
+                driver.quit();
+                logger.info("WebDriver closed successfully.");
+            }
+        } catch (Exception e) {
+            logger.error("Error closing WebDriver: {}", e.getMessage(), e);
+        } finally {
+            driver = null;
+            // Ensure all WebDriver service threads are stopped
             try {
-                wait.until(ExpectedConditions.presenceOfElementLocated(
-                    org.openqa.selenium.By.xpath("//table[contains(@class, 'css-1vzbk0')]")
-                ));
-                logger.info("Search results table found.");
-            } catch (Exception e) {
-                logger.warn("Search results table not found. The search might have returned no results or the XPath is incorrect.");
+                Runtime.getRuntime().exec("pkill -f chromedriver");
+                logger.info("Terminated any lingering chromedriver processes.");
+            } catch (IOException e) {
+                logger.warn("Failed to terminate chromedriver processes: {}", e.getMessage());
+            }
+        }
+    }
+
+    private void loadCookies() {
+        try {
+            File cookieFile = new File("cookies.txt");
+            if (!cookieFile.exists()) {
+                logger.warn("Cookies file not found at {}. Please log in manually and save cookies first.", cookieFile.getAbsolutePath());
+                return;
             }
 
-            logger.info("Page source after search: {}", driver.getPageSource());
+            String baseUrl = prop.getProperty("url");
+            logger.info("Navigating to base URL before adding cookies: {}", baseUrl);
+            driver.get(baseUrl);
 
-            // Split course name into keywords for more flexible matching
-            List<String> keywords = Arrays.asList(courseName.toLowerCase().replace(":", "").split("\\s+"));
-            logger.info("Keywords for matching: {}", keywords);
-
-            // Handle pagination
-            int pageNumber = 1;
-            while (true) {
-                logger.info("Processing page {} of search results.", pageNumber);
-
-                // Wait for the table to be visible
-                try {
-                    wait.until(ExpectedConditions.visibilityOf(courseTable));
-                    logger.info("Course table is visible on page {}.", pageNumber);
-                } catch (Exception e) {
-                    logger.warn("Course table not visible on page {}.", pageNumber);
-                }
-
-                logger.info("Number of course links found on page {}: {}", pageNumber, courseLinks.size());
-                if (courseLinks.isEmpty()) {
-                    logger.info("No course links found for '{}'. The search might have returned no results.", courseName);
+            BufferedReader reader = new BufferedReader(new FileReader(cookieFile));
+            String line;
+            int cookieCount = 0;
+            while ((line = reader.readLine()) != null) {
+                String[] parts = line.split(";");
+                if (parts.length >= 7) {
                     try {
-                        File screenshot = ((TakesScreenshot) driver).getScreenshotAs(OutputType.FILE);
-                        Files.copy(screenshot.toPath(), new File("no-course-links-screenshot-page-" + pageNumber + ".png").toPath(), StandardCopyOption.REPLACE_EXISTING);
-                        logger.info("Screenshot saved as no-course-links-screenshot-page-{}.png", pageNumber);
-                    } catch (Exception ex) {
-                        logger.error("Failed to save screenshot: {}", ex.getMessage());
+                        long expiryTime = Long.parseLong(parts[4]);
+                        Date expiryDate = expiryTime == 0 ? null : new Date(expiryTime);
+                        Cookie cookie = new Cookie(parts[0], parts[1], parts[2], parts[3],
+                                expiryDate, Boolean.parseBoolean(parts[5]), Boolean.parseBoolean(parts[6]));
+                        driver.manage().addCookie(cookie);
+                        cookieCount++;
+                        logger.debug("Added cookie: {}", cookie.getName());
+                    } catch (Exception e) {
+                        logger.warn("Failed to add cookie from line: {}. Error: {}", line, e.getMessage());
                     }
                 } else {
-                    wait.until(ExpectedConditions.visibilityOfAllElements(courseLinks));
-                    logger.info("Found {} course links after waiting for visibility on page {}.", courseLinks.size(), pageNumber);
-
-                    for (WebElement link : courseLinks) {
-                        String href = link.getAttribute("href");
-                        String versionText = link.getText().toLowerCase();
-                        logger.debug("Course link - Text: {}, Href: {}", versionText, href);
-
-                        // Check if all keywords are present in the course name
-                        boolean matches = keywords.stream().allMatch(keyword -> versionText.contains(keyword));
-                        if (matches) {
-                            versions.add(new CourseVersion(link.getText(), href));
-                            logger.info("Added version: {} with link: {}", link.getText(), href);
-                        }
-                    }
-                }
-
-                // Check for next page
-                try {
-                    wait.until(ExpectedConditions.presenceOfElementLocated(By.xpath("//button[@aria-label='Next page']")));
-                    if (nextPageButton.isEnabled()) {
-                        logger.info("Navigating to next page of search results.");
-                        String previousPageSource = driver.getPageSource();
-                        nextPageButton.click();
-                        // Wait for the page to refresh by checking staleness of the table
-                        wait.until(ExpectedConditions.stalenessOf(courseTable));
-                        // Wait for the new table to load
-                        wait.until(ExpectedConditions.visibilityOf(courseTable));
-                        pageNumber++;
-                    } else {
-                        logger.info("Next page button is not enabled. Stopping pagination.");
-                        break;
-                    }
-                } catch (Exception e) {
-                    logger.info("No next page button found or not enabled. Stopping pagination.");
-                    break;
+                    logger.warn("Invalid cookie format in line: {}", line);
                 }
             }
+            reader.close();
+            logger.info("Loaded {} cookies successfully.", cookieCount);
 
-            logger.info("Found {} versions for course '{}'", versions.size(), courseName);
-            if (versions.isEmpty()) {
-                logger.warn("No versions matched for '{}'. The course name might be incorrect or not present.", courseName);
-                try {
-                    File screenshot = ((TakesScreenshot) driver).getScreenshotAs(OutputType.FILE);
-                    Files.copy(screenshot.toPath(), new File("final-no-versions-screenshot.png").toPath(), StandardCopyOption.REPLACE_EXISTING);
-                    logger.info("Final screenshot saved as final-no-versions-screenshot.png");
-                } catch (Exception ex) {
-                    logger.error("Failed to save screenshot: {}", ex.getMessage());
-                }
-            }
+            Set<Cookie> cookies = driver.manage().getCookies();
+            logger.info("Total cookies in session after loading: {}", cookies.size());
+            cookies.forEach(cookie -> logger.debug("Cookie in session: {}", cookie));
+
+            logger.info("Refreshing page to apply cookies...");
+            driver.navigate().refresh();
         } catch (Exception e) {
-            logger.error("Error searching for course '{}': {}", courseName, e.getMessage());
-            logger.error("Page source on search failure: {}", driver.getPageSource());
-            try {
-                File screenshot = ((TakesScreenshot) driver).getScreenshotAs(OutputType.FILE);
-                Files.copy(screenshot.toPath(), new File("search-failure-screenshot.png").toPath(), StandardCopyOption.REPLACE_EXISTING);
-                logger.info("Screenshot saved as search-failure-screenshot.png");
-            } catch (Exception ex) {
-                logger.error("Failed to save screenshot: {}", ex.getMessage());
-            }
-            throw new RuntimeException("Failed to search for course: " + courseName, e);
+            logger.error("Failed to load cookies: {}", e.getMessage(), e);
         }
-        return versions;
     }
 
-    public static class CourseVersion {
-        private final String version;
-        private final String link;
+    public void saveCookies() {
+        try {
+            String adminUrl = "https://www.coursera.org/admin-v2/ibm-skills-network/home/courses";
+            logger.info("Navigating to admin URL to save cookies: {}", adminUrl);
+            driver.get(adminUrl);
 
-        public CourseVersion(String version, String link) {
-            this.version = version;
-            this.link = link;
+            File cookieFile = new File("cookies.txt");
+            BufferedWriter writer = new BufferedWriter(new FileWriter(cookieFile));
+            Set<Cookie> cookies = driver.manage().getCookies();
+            for (Cookie cookie : cookies) {
+                writer.write(cookie.getName() + ";" + cookie.getValue() + ";" + cookie.getDomain() + ";" +
+                        cookie.getPath() + ";" + (cookie.getExpiry() != null ? cookie.getExpiry().getTime() : "0") + ";" +
+                        cookie.isSecure() + ";" + cookie.isHttpOnly());
+                writer.newLine();
+            }
+            writer.close();
+            logger.info("Cookies saved to cookies.txt");
+        } catch (Exception e) {
+            logger.error("Failed to save cookies: {}", e.getMessage(), e);
         }
+    }
 
-        public String getVersion() {
-            return version;
-        }
+    private void performManualLogin() {
+        try {
+            loginPage = new LoginPage(driver);
+            String username = prop.getProperty("username");
+            String password = prop.getProperty("password");
+            if (username == null || password == null) {
+                throw new RuntimeException("Username or password not found in config.properties");
+            }
+            logger.info("Performing manual login with username: {}", username);
+            loginPage.login(username, password);
 
-        public String getLink() {
-            return link;
+            new WebDriverWait(driver, Duration.ofSeconds(30))
+                    .until(d -> d.getCurrentUrl().contains("coursera.org") && !d.getCurrentUrl().contains("login"));
+            logger.info("Manual login successful. Current URL: {}", driver.getCurrentUrl());
+        } catch (Exception e) {
+            logger.error("Manual login failed: {}", e.getMessage(), e);
+            throw new RuntimeException("Failed to perform manual login", e);
         }
     }
 }
